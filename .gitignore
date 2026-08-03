@@ -1,0 +1,6 @@
+# Build artifacts (Shafwan builds his own)
+cmake_targets/ran_build/
+cmake_targets/log/
+
+# FlexRIC (clone separately - see SETUP.md, wrong version breaks build)
+openair2/E2AP/flexric/

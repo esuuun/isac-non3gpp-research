@@ -1,0 +1,4 @@
+[submodule "openair2/E2AP/flexric"]
+	path = openair2/E2AP/flexric
+	url = https://github.com/Kyang0524/flexric.git
+	branch = oai-e2-fixes
