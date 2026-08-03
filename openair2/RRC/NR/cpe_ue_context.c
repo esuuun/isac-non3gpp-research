@@ -572,7 +572,7 @@ cpe_ue_entry_t *cpe_ue_add(cpe_ue_table_t *tbl,
   slot->active_path = CPE_UE_PATH_CPE;
   slot->valid       = true;
 
-  if (cpe_mac)
+  if (cpe_mac){
     memcpy(slot->cpe_mac, cpe_mac, CPE_UE_MAC_LEN);
     /* Convert binary MAC to human-readable string for ISAC use */
     snprintf(slot->mac_address, sizeof(slot->mac_address),
@@ -581,6 +581,7 @@ cpe_ue_entry_t *cpe_ue_add(cpe_ue_table_t *tbl,
              cpe_mac[3], cpe_mac[4], cpe_mac[5]);
     /* Automatically provision Virtual USIM to Free5GC UDM */
     provision_virtual_usim(slot->mac_address);
+  }
   if (cpe_outer_ip)
     strncpy(slot->cpe_outer_ip, cpe_outer_ip, INET_ADDRSTRLEN - 1);
   if (cpe_inner_ip)
