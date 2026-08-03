@@ -10,6 +10,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <mysql/mysql.h>
+#include <openssl/hmac.h>
 
 /* ── Global singleton ──────────────────────────────────────────────────── */
 
@@ -464,6 +465,27 @@ const char *cpe_ue_path_name(cpe_ue_path_e path)
 
 /* ── Virtual USIM Provisioning ──────────────────────────────────────────── */
 /* Generate NAI-based SUPI from MAC and provision to Free5GC UDM via REST API */
+/* Generate 128-bit K using HMAC-SHA256(master_secret, MAC) */
+#define VUSIM_MASTER_SECRET "airport-master-secret-2026"
+
+static void generate_k_from_mac(const char *mac_hex, char *k_out, size_t k_out_len)
+{
+  unsigned char hmac_result[EVP_MAX_MD_SIZE];
+  unsigned int hmac_len = 0;
+
+  HMAC(EVP_sha256(),
+       VUSIM_MASTER_SECRET, strlen(VUSIM_MASTER_SECRET),
+       (const unsigned char *)mac_hex, strlen(mac_hex),
+       hmac_result, &hmac_len);
+
+  /* Take only first 16 bytes (128-bit) for K, encode as hex string (32 chars) */
+  char hex[EVP_MAX_MD_SIZE * 2 + 1] = {0};
+  for (unsigned int i = 0; i < 16 && i < hmac_len; i++)
+    snprintf(hex + (i * 2), 3, "%02x", hmac_result[i]);
+
+  snprintf(k_out, k_out_len, "%s", hex);
+}
+
 static void provision_virtual_usim(const char *mac_address)
 {
   if (!mac_address || mac_address[0] == '\0') return;
@@ -479,10 +501,14 @@ static void provision_virtual_usim(const char *mac_address)
   char supi[64] = {0};
   snprintf(supi, sizeof(supi), "nai-mac-%s@airport.net", mac_hex);
 
-  fprintf(stderr, "[VUSIM] Provisioning Virtual USIM: MAC=%s SUPI=%s\n",
-        mac_address, supi);
+  /* 2. Generate cryptographic key K using HMAC-SHA256(master_secret, MAC) */
+  char k[33] = {0};
+  generate_k_from_mac(mac_hex, k, sizeof(k));
 
-  /* 2. Build mongosh script that inserts into all three UDR collections */
+  fprintf(stderr, "[VUSIM] Provisioning Virtual USIM: MAC=%s SUPI=%s K=%s\n",
+        mac_address, supi, k);
+
+  /* 3. Build mongosh script that inserts into all three UDR collections */
   char script[4096] = {0};
   snprintf(script, sizeof(script),
     "mongosh free5gc --quiet --eval '"
@@ -491,7 +517,7 @@ static void provision_virtual_usim(const char *mac_address)
       "{$set: {"
         "ueId: \"%s\","
         "authenticationMethod: \"5G_AKA\","
-        "permanentKey: {permanentKeyValue: \"8baf473f2f8fd09487cccbd7097c6862\", encryptionKey: 0, encryptionAlgorithm: 0},"
+        "permanentKey: {permanentKeyValue: \"%s\", encryptionKey: 0, encryptionAlgorithm: 0},"
         "sequenceNumber: \"000000000000\","
         "authenticationManagementField: \"8000\","
         "opc: {opcValue: \"8e27b6af0e692e750f32667a3b14605d\", encryptionKey: 0, encryptionAlgorithm: 0}"
@@ -517,7 +543,7 @@ static void provision_virtual_usim(const char *mac_address)
       "}},"
       "{upsert: true});"
     "' > /tmp/vusim_provision.log 2>&1 &",
-    supi, supi, supi, supi, supi, supi);
+    supi, supi, k, supi, supi, supi, supi);
 
   int ret = system(script);
   if (ret != 0)
