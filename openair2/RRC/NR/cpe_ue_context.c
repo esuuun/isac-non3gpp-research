@@ -469,7 +469,6 @@ static void provision_virtual_usim(const char *mac_address)
   if (!mac_address || mac_address[0] == '\0') return;
 
   /* 1. Generate NAI-based SUPI from MAC */
-  /* Remove colons from MAC: "AA:BB:CC:DD:EE:FF" -> "AABBCCDDEEFF" */
   char mac_hex[13] = {0};
   int j = 0;
   for (int i = 0; mac_address[i] && j < 12; i++) {
@@ -483,47 +482,46 @@ static void provision_virtual_usim(const char *mac_address)
   fprintf(stderr, "[VUSIM] Provisioning Virtual USIM: MAC=%s SUPI=%s\n",
         mac_address, supi);
 
-  /* 2. Build subscriber JSON */
-  char json_body[1024] = {0};
-  snprintf(json_body, sizeof(json_body),
-    "{"
-    "\"plmnID\":\"20893\","
-    "\"AuthenticationSubscription\":{"
-      "\"authenticationMethod\":\"5G_AKA\","
-      "\"permanentKey\":{\"permanentKeyValue\":\"8baf473f2f8fd09487cccbd7097c6862\",\"encryptionKey\":0,\"encryptionAlgorithm\":0},"
-      "\"sequenceNumber\":\"000000000000\","
-      "\"authenticationManagementField\":\"8000\","
-      "\"opc\":{\"opcValue\":\"8e27b6af0e692e750f32667a3b14605d\",\"encryptionKey\":0,\"encryptionAlgorithm\":0}"
-    "},"
-    "\"AccessAndMobilitySubscriptionData\":{"
-      "\"gpsis\":[\"msisdn-0000000000\"],"
-      "\"nssai\":{\"defaultSingleNssais\":[{\"sst\":1,\"sd\":\"010203\"}]}"
-    "},"
-    "\"SessionManagementSubscriptionData\":[{"
-      "\"singleNssai\":{\"sst\":1,\"sd\":\"010203\"},"
-      "\"dnnConfigurations\":{"
-        "\"internet\":{\"sscModes\":{\"defaultSscMode\":\"SSC_MODE_1\"},\"pduSessionTypes\":{\"defaultSessionType\":\"IPV4\"},\"5gQosProfile\":{\"5qi\":9}},"
-        "\"isac.airport.net\":{\"sscModes\":{\"defaultSscMode\":\"SSC_MODE_1\"},\"pduSessionTypes\":{\"defaultSessionType\":\"IPV4\"},\"5gQosProfile\":{\"5qi\":5}}"
-      "}"
-    "}]"
-    "}");
+  /* 2. Build mongosh script that inserts into all three UDR collections */
+  char script[4096] = {0};
+  snprintf(script, sizeof(script),
+    "mongosh free5gc --quiet --eval '"
+    "db.subscriptionData.authenticationData.authenticationSubscription.updateOne("
+      "{ueId: \"%s\"},"
+      "{$set: {"
+        "ueId: \"%s\","
+        "authenticationMethod: \"5G_AKA\","
+        "permanentKey: {permanentKeyValue: \"8baf473f2f8fd09487cccbd7097c6862\", encryptionKey: 0, encryptionAlgorithm: 0},"
+        "sequenceNumber: \"000000000000\","
+        "authenticationManagementField: \"8000\","
+        "opc: {opcValue: \"8e27b6af0e692e750f32667a3b14605d\", encryptionKey: 0, encryptionAlgorithm: 0}"
+      "}},"
+      "{upsert: true});"
+    "db.subscriptionData.provisionedData.amData.updateOne("
+      "{ueId: \"%s\", servingPlmnId: \"20893\"},"
+      "{$set: {"
+        "ueId: \"%s\", servingPlmnId: \"20893\","
+        "gpsis: [\"msisdn-0000000000\"],"
+        "nssai: {defaultSingleNssais: [{sst: 1, sd: \"010203\"}], singleNssais: []}"
+      "}},"
+      "{upsert: true});"
+    "db.subscriptionData.provisionedData.smData.updateOne("
+      "{ueId: \"%s\", servingPlmnId: \"20893\"},"
+      "{$set: {"
+        "ueId: \"%s\", servingPlmnId: \"20893\","
+        "singleNssai: {sst: 1, sd: \"010203\"},"
+        "dnnConfigurations: {"
+          "internet: {sscModes: {defaultSscMode: \"SSC_MODE_1\"}, pduSessionTypes: {defaultSessionType: \"IPV4\"}, \"5gQosProfile\": {\"5qi\": 9}},"
+          "\"isac.airport.net\": {sscModes: {defaultSscMode: \"SSC_MODE_1\"}, pduSessionTypes: {defaultSessionType: \"IPV4\"}, \"5gQosProfile\": {\"5qi\": 5}}"
+        "}"
+      "}},"
+      "{upsert: true});"
+    "' > /tmp/vusim_provision.log 2>&1 &",
+    supi, supi, supi, supi, supi, supi);
 
-  /* 3. POST to Free5GC WebUI API */
-  char url[128] = {0};
-  snprintf(url, sizeof(url),
-           "http://127.0.0.1:5000/subscriber/%s/20893", supi);
-
-  /* Use system curl for simplicity in PoC */
-  char cmd[2048] = {0};
-  snprintf(cmd, sizeof(cmd),
-           "curl -s -X POST '%s' "
-           "-H 'Content-Type: application/json' "
-           "-d '%s' > /tmp/vusim_provision.log 2>&1 &",
-           url, json_body);
-
-  int ret = system(cmd);
+  int ret = system(script);
   if (ret != 0)
-    fprintf(stderr, "[VUSIM] curl command failed for SUPI=%s\n", supi);
+    fprintf(stderr, "[VUSIM] mongosh command failed for SUPI=%s\n", supi);
   else
     fprintf(stderr, "[VUSIM] Provisioning request sent for SUPI=%s\n", supi);
 }
